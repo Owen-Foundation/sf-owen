@@ -1,6 +1,6 @@
 """
 Stockfish feature extractor Python wrapper using fast C++ bitboards.
-Extracts HalfKAv2_hm, FullThreats, and PP_3Wide active indices directly from FEN strings.
+Extracts HalfKAv2_hm, FullThreats, and PP_3Wide active indices directly from FEN strings or raw 64-byte board arrays.
 """
 
 import os
@@ -42,19 +42,35 @@ _lib.init_sf_bitboards.restype = None
 _lib.extract_features_fen.argtypes = [ctypes.c_char_p, ctypes.POINTER(BoardFeatures)]
 _lib.extract_features_fen.restype = ctypes.c_int
 
-# Initialize Stockfish bitboards once
+_lib.extract_features_raw_board.argtypes = [ctypes.c_char_p, ctypes.c_int, ctypes.POINTER(BoardFeatures)]
+_lib.extract_features_raw_board.restype = ctypes.c_int
+
 _lib.init_sf_bitboards()
 
 
 def extract_features(fen: str):
-    """
-    Extracts active NNUE features from a FEN string.
-    Returns: dict with bucket, side_to_move, and NumPy int64 index arrays for us and them.
-    """
     bf = BoardFeatures()
     res = _lib.extract_features_fen(fen.encode("utf-8"), ctypes.byref(bf))
     if res != 0:
         raise ValueError(f"Failed to extract features for FEN: {fen}")
+
+    return {
+        "bucket": bf.bucket,
+        "side_to_move": bf.side_to_move,
+        "halfka_us": np.array(bf.halfka_us.indices[: bf.halfka_us.count], dtype=np.int64),
+        "halfka_them": np.array(bf.halfka_them.indices[: bf.halfka_them.count], dtype=np.int64),
+        "threat_us": np.array(bf.threat_us.indices[: bf.threat_us.count], dtype=np.int64),
+        "threat_them": np.array(bf.threat_them.indices[: bf.threat_them.count], dtype=np.int64),
+        "pp_us": np.array(bf.pp_us.indices[: bf.pp_us.count], dtype=np.int64),
+        "pp_them": np.array(bf.pp_them.indices[: bf.pp_them.count], dtype=np.int64),
+    }
+
+
+def extract_features_from_board(board_bytes: bytes, stm: int):
+    bf = BoardFeatures()
+    res = _lib.extract_features_raw_board(board_bytes, stm, ctypes.byref(bf))
+    if res != 0:
+        raise ValueError("Failed to extract features from board")
 
     return {
         "bucket": bf.bucket,

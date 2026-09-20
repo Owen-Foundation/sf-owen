@@ -2,6 +2,11 @@
 #include <vector>
 #include <string>
 #include <cstring>
+#include <sstream>
+#include <filesystem>
+#include <array>
+
+#define private public
 #include "/home/hemesh/sf-src/src/types.h"
 #include "/home/hemesh/sf-src/src/position.h"
 #include "/home/hemesh/sf-src/src/bitboard.h"
@@ -9,6 +14,7 @@
 #include "/home/hemesh/sf-src/src/nnue/features/half_ka_v2_hm.h"
 #include "/home/hemesh/sf-src/src/nnue/features/full_threats.h"
 #include "/home/hemesh/sf-src/src/nnue/features/pp_3wide.h"
+#undef private
 
 using namespace Stockfish;
 using namespace Stockfish::Eval::NNUE::Features;
@@ -31,16 +37,18 @@ struct BoardFeatures {
     FeatureList pp_them;
 };
 
+static const Stockfish::Piece OWEN_TO_SF_PIECE[13] = {
+    Stockfish::W_PAWN, Stockfish::W_KNIGHT, Stockfish::W_BISHOP, Stockfish::W_ROOK, Stockfish::W_QUEEN, Stockfish::W_KING,
+    Stockfish::B_PAWN, Stockfish::B_KNIGHT, Stockfish::B_BISHOP, Stockfish::B_ROOK, Stockfish::B_QUEEN, Stockfish::B_KING,
+    Stockfish::NO_PIECE
+};
+
 void init_sf_bitboards() {
     Attacks::init();
     Position::init();
 }
 
-int extract_features_fen(const char* fen, BoardFeatures* out) {
-    StateInfo si;
-    Position pos;
-    pos.set(fen, false, &si);
-
+static inline void populate_features(const Position& pos, BoardFeatures* out) {
     Color us = pos.side_to_move();
     Color them = ~us;
     out->side_to_move = (int)us;
@@ -89,7 +97,46 @@ int extract_features_fen(const char* fen, BoardFeatures* out) {
     for (size_t i = 0; i < pp_them_list.size(); ++i) {
         out->pp_them.indices[i] = pp_them_list[i];
     }
+}
 
+int extract_features_fen(const char* fen, BoardFeatures* out) {
+    StateInfo si;
+    Position pos;
+    pos.set(fen, false, &si);
+    populate_features(pos, out);
+    return 0;
+}
+
+int extract_features_raw_board(const uint8_t* raw_board64, int stm, BoardFeatures* out) {
+    StateInfo si;
+    std::memset(&si, 0, sizeof(StateInfo));
+    Position pos;
+    pos.st = &si;
+    pos.gamePly = 0;
+    pos.sideToMove = Stockfish::Color(stm);
+
+    std::memset(pos.pieceCount, 0, sizeof(pos.pieceCount));
+    pos.byTypeBB.fill(0);
+    pos.byColorBB.fill(0);
+    pos.board.fill(Stockfish::NO_PIECE);
+
+    for (int s = 0; s < 64; ++s) {
+        uint8_t opc = raw_board64[s];
+        if (opc < 12) {
+            Stockfish::Piece spc = OWEN_TO_SF_PIECE[opc];
+            Stockfish::Square ssq = Stockfish::Square(s);
+            Stockfish::Color sc = Stockfish::color_of(spc);
+            Stockfish::PieceType spt = Stockfish::type_of(spc);
+
+            pos.board[ssq] = spc;
+            pos.byTypeBB[Stockfish::ALL_PIECES] |= Stockfish::square_bb(ssq);
+            pos.byTypeBB[spt] |= Stockfish::square_bb(ssq);
+            pos.byColorBB[sc] |= Stockfish::square_bb(ssq);
+            pos.pieceCount[spc]++;
+        }
+    }
+    pos.set_state();
+    populate_features(pos, out);
     return 0;
 }
 
