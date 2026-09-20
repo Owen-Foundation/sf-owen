@@ -12,7 +12,19 @@ import subprocess
 import argparse
 from concurrent.futures import ProcessPoolExecutor
 
-SF19_PATH = "/home/hemesh/Documents/stockfish/stockfish-linux-x86-64-universal"
+def get_default_sf_path():
+    candidates = [
+        "/home/hemesh/Documents/stockfish/stockfish-linux-x86-64-universal",
+        "/kaggle/working/sf-src/src/stockfish",
+        "/usr/games/stockfish",
+        "stockfish"
+    ]
+    for c in candidates:
+        if os.path.exists(c):
+            return c
+    return "stockfish"
+
+DEFAULT_SF_PATH = get_default_sf_path()
 BOOK_PATH = "/home/hemesh/Videos/Owen/tools/book-200.epd"
 
 # Piece mapping: standard FEN char to Owen/SF integer (0..11, 12=empty)
@@ -44,7 +56,9 @@ def fen_to_raw_board(fen: str):
 
 
 class StockfishWorker:
-    def __init__(self, sf_path=SF19_PATH):
+    def __init__(self, sf_path=None):
+        if not sf_path:
+            sf_path = DEFAULT_SF_PATH
         self.proc = subprocess.Popen(
             [sf_path],
             stdin=subprocess.PIPE,
@@ -109,8 +123,8 @@ class StockfishWorker:
             pass
 
 
-def generate_batch(worker_id: int, fens: list, depth: int, out_bin_path: str):
-    worker = StockfishWorker()
+def generate_batch(worker_id: int, fens: list, depth: int, out_bin_path: str, sf_path: str = None):
+    worker = StockfishWorker(sf_path=sf_path)
     records = []
     
     for idx, fen in enumerate(fens):
@@ -137,6 +151,7 @@ def generate_batch(worker_id: int, fens: list, depth: int, out_bin_path: str):
 
 def main():
     parser = argparse.ArgumentParser(description="Deep D24-D30 Distillation Dataset Generator")
+    parser.add_argument("--engine", type=str, default=DEFAULT_SF_PATH, help="Path to Stockfish engine")
     parser.add_argument("--depth", type=int, default=24, help="Search depth per position")
     parser.add_argument("--workers", type=int, default=8, help="Parallel worker threads")
     parser.add_argument("--total-positions", type=int, default=10000, help="Total positions to generate")
@@ -145,19 +160,26 @@ def main():
 
     print("=" * 60)
     print("SF-OWEN DEEP D24-D30 DISTILLATION DATASET GENERATOR")
-    print(f"Engine: {SF19_PATH}")
+    print(f"Engine: {args.engine}")
     print(f"Workers: {args.workers}, Target Depth: D{args.depth}")
     print(f"Output: {args.output}")
     print("=" * 60)
 
     # Load openings
     openings = []
-    if os.path.exists(BOOK_PATH):
-        with open(BOOK_PATH, "r") as f:
-            for line in f:
-                line = line.strip()
-                if line:
-                    openings.append(line.split(";")[0].strip())
+    book_candidates = [
+        BOOK_PATH,
+        "/kaggle/working/sf-owen/tools/book-200.epd",
+        "/kaggle/working/book-200.epd"
+    ]
+    for b in book_candidates:
+        if os.path.exists(b):
+            with open(b, "r") as f:
+                for line in f:
+                    line = line.strip()
+                    if line:
+                        openings.append(line.split(";")[0].strip())
+            break
     if not openings:
         openings = ["rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"]
 
@@ -179,7 +201,7 @@ def main():
     with ProcessPoolExecutor(max_workers=args.workers) as executor:
         futures = []
         for w_id, chunk in enumerate(chunks):
-            futures.append(executor.submit(generate_batch, w_id, chunk, args.depth, args.output))
+            futures.append(executor.submit(generate_batch, w_id, chunk, args.depth, args.output, args.engine))
             
         for f in futures:
             total_generated += f.result()
