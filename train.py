@@ -50,12 +50,13 @@ def train(args):
     )
 
     # 3. Optimizer & Criterion
+    # Use standard low fine-tuning learning rate (1e-5) to preserve grandmaster baseline
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
-    criterion = nn.SmoothL1Loss()
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=1e-6)
+    criterion = nn.SmoothL1Loss(beta=32.0)
 
     # 4. Training Loop
-    print(f"\nStarting Fine-Tuning for {args.epochs} Epochs...")
+    print(f"\nStarting Fine-Tuning for {args.epochs} Epochs with lr={args.lr}...")
     for epoch in range(1, args.epochs + 1):
         model.train()
         total_loss = 0.0
@@ -85,10 +86,10 @@ def train(args):
             batch_loss.backward()
 
             # Gradient clipping
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.5)
             optimizer.step()
 
-            # Weight clamping to maintain integer quantization bounds
+            # Quantization boundary maintenance
             with torch.no_grad():
                 model.threat_weights.clamp_(-128, 127)
                 model.pp_weights.clamp_(-128, 127)
@@ -109,7 +110,6 @@ def train(args):
 
     # 5. Export Fine-Tuned Net
     print(f"\nExporting Fine-Tuned Network to {args.output_net}...")
-    # Update weights dict from PyTorch parameters
     with torch.no_grad():
         weights_dict["ft_biases"] = model.ft_biases.cpu().numpy().astype(np.int16)
         weights_dict["threat_weights"] = model.threat_weights.cpu().numpy().astype(np.int8)
@@ -134,15 +134,15 @@ def train(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="SF-Owen Fine-Tuning & Distillation Trainer")
     parser.add_argument("--base-net", type=str, default="/home/hemesh/sf-nets/nn-134a887f4c8f.nnue", help="Path to base .nnue")
-    parser.add_argument("--data", type=str, default="/home/hemesh/Videos/Owen/tools/book-200.epd", help="Training dataset")
-    parser.add_argument("--output-net", type=str, default="/home/hemesh/Videos/sf-owen/sf-owen-v1.nnue", help="Output .nnue path")
-    parser.add_argument("--epochs", type=int, default=3, help="Training epochs")
-    parser.add_argument("--batch-size", type=int, default=16, help="Batch size")
-    parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate")
+    parser.add_argument("--data", type=str, default="/home/hemesh/Videos/Owen/data/sdata-final-distilled-v2.bin", help="Training dataset")
+    parser.add_argument("--output-net", type=str, default="/home/hemesh/Videos/sf-owen/sf-owen-champion.nnue", help="Output .nnue path")
+    parser.add_argument("--epochs", type=int, default=1, help="Training epochs")
+    parser.add_argument("--batch-size", type=int, default=32, help="Batch size")
+    parser.add_argument("--lr", type=float, default=1e-5, help="Learning rate (1e-5 default for fine-tuning)")
     parser.add_argument("--weight-decay", type=float, default=1e-5, help="Weight decay")
-    parser.add_argument("--max-samples", type=int, default=None, help="Max samples")
+    parser.add_argument("--max-samples", type=int, default=10000, help="Max samples")
     parser.add_argument("--workers", type=int, default=2, help="DataLoader workers")
-    parser.add_argument("--log-interval", type=int, default=10, help="Log interval")
+    parser.add_argument("--log-interval", type=int, default=50, help="Log interval")
 
     args = parser.parse_args()
     train(args)
