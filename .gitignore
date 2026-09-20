@@ -1,0 +1,7 @@
+__pycache__/
+*.so
+*.o
+*.a
+*.nnue
+*.bin
+*.log
