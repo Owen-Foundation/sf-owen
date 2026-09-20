@@ -24,6 +24,12 @@ _lib.decode_leb128_i16.restype = ctypes.c_int
 _lib.decode_leb128_i32.argtypes = [ctypes.c_char_p, ctypes.c_uint32, ctypes.c_void_p, ctypes.c_uint32]
 _lib.decode_leb128_i32.restype = ctypes.c_int
 
+_lib.encode_leb128_i16.argtypes = [ctypes.c_void_p, ctypes.c_uint32, ctypes.c_char_p, ctypes.c_uint32, ctypes.POINTER(ctypes.c_uint32)]
+_lib.encode_leb128_i16.restype = ctypes.c_int
+
+_lib.encode_leb128_i32.argtypes = [ctypes.c_void_p, ctypes.c_uint32, ctypes.c_char_p, ctypes.c_uint32, ctypes.POINTER(ctypes.c_uint32)]
+_lib.encode_leb128_i32.restype = ctypes.c_int
+
 
 def _read_leb128(f, count, dtype=np.int16):
     magic = f.read(17)
@@ -50,22 +56,29 @@ def _read_leb128(f, count, dtype=np.int16):
 def _write_leb128(f, arr):
     f.write(b"COMPRESSED_LEB128")
     flat = np.ascontiguousarray(arr).ravel()
+    count = len(flat)
     
-    # Simple Python LEB128 encoder (or raw fallback)
-    encoded = bytearray()
-    for val in flat:
-        v = int(val)
-        while True:
-            byte = v & 0x7F
-            v >>= 7
-            if (v == 0 and (byte & 0x40) == 0) or (v == -1 and (byte & 0x40) != 0):
-                encoded.append(byte)
-                break
-            else:
-                encoded.append(byte | 0x80)
+    # Preallocate buffer (LEB128 takes max 5 bytes per 32-bit int, average ~1.5 bytes)
+    max_buf_len = count * 4 + 1024
+    buf = bytearray(max_buf_len)
+    buf_arr = (ctypes.c_char * max_buf_len).from_buffer(buf)
+    out_len = ctypes.c_uint32(0)
     
-    f.write(struct.pack("<I", len(encoded)))
-    f.write(encoded)
+    if flat.dtype == np.int16:
+        res = _lib.encode_leb128_i16(flat.ctypes.data, count, buf_arr, max_buf_len, ctypes.byref(out_len))
+    elif flat.dtype == np.int32:
+        res = _lib.encode_leb128_i32(flat.ctypes.data, count, buf_arr, max_buf_len, ctypes.byref(out_len))
+    else:
+        # Cast to int32
+        arr32 = flat.astype(np.int32)
+        res = _lib.encode_leb128_i32(arr32.ctypes.data, count, buf_arr, max_buf_len, ctypes.byref(out_len))
+        
+    if res != 0:
+        raise RuntimeError(f"Fast LEB128 encoding failed: {res}")
+        
+    encoded_len = out_len.value
+    f.write(struct.pack("<I", encoded_len))
+    f.write(memoryview(buf)[:encoded_len])
 
 
 def load_sf_nnue(file_path: str):

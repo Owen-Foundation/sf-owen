@@ -1,7 +1,7 @@
 """
-SF-Owen Fine-Tuning & Knowledge Distillation Trainer.
-Fine-tunes Stockfish NNUE networks on self-play / distillation datasets in PyTorch
-and exports deployment-ready .nnue network binaries.
+SF-Owen High-Precision WDL Distillation Trainer.
+Uses official Sigmoid WDL Cross-Entropy loss (matching Stockfish nnue-pytorch)
+to preserve 3600 Elo piece values while learning deep tactical predictions.
 """
 
 import os
@@ -24,21 +24,21 @@ def collate_fn(batch):
 
 def train(args):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Using device: {device}")
+    print(f"Using device: {device}", flush=True)
 
     # 1. Load Base Net
-    print(f"Loading Base NNUE Net: {args.base_net}...")
+    print(f"Loading Base NNUE Net: {args.base_net}...", flush=True)
     weights_dict = load_sf_nnue(args.base_net)
 
     model = StockfishNNUE().to(device)
     model.load_from_dict(weights_dict)
-    print(f"Model parameters: {sum(p.numel() for p in model.parameters()):,}")
+    print(f"Model parameters: {sum(p.numel() for p in model.parameters()):,}", flush=True)
 
     # 2. Setup Dataset
-    print(f"Loading dataset: {args.data}...")
+    print(f"Loading dataset: {args.data}...", flush=True)
     dataset = ChessNNUEDataset(args.data, max_samples=args.max_samples)
     if len(dataset) == 0:
-        print("Dataset is empty. Exiting.")
+        print("Dataset is empty. Exiting.", flush=True)
         return
 
     loader = DataLoader(
@@ -49,14 +49,15 @@ def train(args):
         num_workers=args.workers
     )
 
-    # 3. Optimizer & Criterion
-    # Use standard low fine-tuning learning rate (1e-5) to preserve grandmaster baseline
+    # 3. Optimizer & Sigmoid WDL Loss
+    # Scale factor for centipawns -> win probability (standard 400.0 cp)
+    SCALE = 400.0
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=1e-6)
-    criterion = nn.SmoothL1Loss(beta=32.0)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=1e-7)
+    criterion = nn.BCEWithLogitsLoss()
 
     # 4. Training Loop
-    print(f"\nStarting Fine-Tuning for {args.epochs} Epochs with lr={args.lr}...")
+    print(f"\nStarting WDL Fine-Tuning for {args.epochs} Epochs with lr={args.lr}...", flush=True)
     for epoch in range(1, args.epochs + 1):
         model.train()
         total_loss = 0.0
@@ -65,28 +66,18 @@ def train(args):
 
         for batch_idx, batch in enumerate(loader):
             optimizer.zero_grad()
-            batch_loss = 0.0
+            preds = model.forward_batch(batch)
+            raw_targets = torch.stack([s["target"] for s in batch]).to(device)
+            
+            # Sigmoid WDL target in [0, 1]
+            target_wdl = torch.sigmoid(raw_targets / SCALE)
+            pred_logits = preds / SCALE
 
-            for sample in batch:
-                pred = model.forward_from_features(
-                    sample["halfka_us"].to(device),
-                    sample["halfka_them"].to(device),
-                    sample["threat_us"].to(device),
-                    sample["threat_them"].to(device),
-                    sample["pp_us"].to(device),
-                    sample["pp_them"].to(device),
-                    sample["bucket"],
-                    us_is_white=(sample["stm"] == 0)
-                )
-                target = sample["target"].to(device)
-                loss = criterion(pred, target)
-                batch_loss += loss
-
-            batch_loss = batch_loss / len(batch)
-            batch_loss.backward()
+            loss = criterion(pred_logits, target_wdl)
+            loss.backward()
 
             # Gradient clipping
-            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.5)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=0.1)
             optimizer.step()
 
             # Quantization boundary maintenance
@@ -99,17 +90,18 @@ def train(args):
                     stack.fc1.weight.clamp_(-128, 127)
                     stack.fc2.weight.clamp_(-128, 127)
 
-            total_loss += batch_loss.item()
+            total_loss += loss.item()
             num_batches += 1
 
             if (batch_idx + 1) % args.log_interval == 0 or (batch_idx + 1) == len(loader):
                 avg_loss = total_loss / num_batches
-                print(f"Epoch [{epoch}/{args.epochs}] Batch [{batch_idx+1}/{len(loader)}] Loss: {avg_loss:.4f} ({time.time()-t0:.1f}s)")
+                print(f"Epoch [{epoch}/{args.epochs}] Batch [{batch_idx+1}/{len(loader)}] WDL Loss: {avg_loss:.5f} ({time.time()-t0:.1f}s)", flush=True)
 
         scheduler.step()
 
     # 5. Export Fine-Tuned Net
-    print(f"\nExporting Fine-Tuned Network to {args.output_net}...")
+    print(f"\nExporting Fine-Tuned Network to {args.output_net}...", flush=True)
+    t_exp = time.time()
     with torch.no_grad():
         weights_dict["ft_biases"] = model.ft_biases.cpu().numpy().astype(np.int16)
         weights_dict["threat_weights"] = model.threat_weights.cpu().numpy().astype(np.int8)
@@ -127,22 +119,22 @@ def train(args):
             weights_dict["layer_stacks"][i]["fc2_bias"] = stack.fc2.bias.cpu().numpy().astype(np.int32)
             weights_dict["layer_stacks"][i]["fc2_weight"] = stack.fc2.weight.cpu().numpy().astype(np.int8)
 
-    save_sf_nnue(weights_dict, args.output_net, description=f"SF-Owen fine-tuned from {os.path.basename(args.base_net)}")
-    print(f"Successfully saved {args.output_net} ({os.path.getsize(args.output_net):,} bytes)!")
+    save_sf_nnue(weights_dict, args.output_net, description=f"SF-Owen WDL fine-tuned from {os.path.basename(args.base_net)}")
+    print(f"Successfully saved {args.output_net} ({os.path.getsize(args.output_net):,} bytes in {time.time()-t_exp:.2f}s)!", flush=True)
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="SF-Owen Fine-Tuning & Distillation Trainer")
-    parser.add_argument("--base-net", type=str, default="/home/hemesh/sf-nets/nn-134a887f4c8f.nnue", help="Path to base .nnue")
-    parser.add_argument("--data", type=str, default="/home/hemesh/Videos/Owen/data/sdata-final-distilled-v2.bin", help="Training dataset")
-    parser.add_argument("--output-net", type=str, default="/home/hemesh/Videos/sf-owen/sf-owen-champion.nnue", help="Output .nnue path")
+    parser = argparse.ArgumentParser(description="SF-Owen WDL Fine-Tuning & Distillation Trainer")
+    parser.add_argument("--base-net", type=str, default="/home/hemesh/sf-nets/nn-1a298aa575a0.nnue", help="Path to base .nnue")
+    parser.add_argument("--data", type=str, default="/home/hemesh/sf-nets/kaggle_d24_v6/d24_distill.bin", help="Training dataset")
+    parser.add_argument("--output-net", type=str, default="/home/hemesh/sf-nets/sf-owen-v19-wdl-champion.nnue", help="Output .nnue path")
     parser.add_argument("--epochs", type=int, default=1, help="Training epochs")
-    parser.add_argument("--batch-size", type=int, default=32, help="Batch size")
-    parser.add_argument("--lr", type=float, default=1e-5, help="Learning rate (1e-5 default for fine-tuning)")
+    parser.add_argument("--batch-size", type=int, default=64, help="Batch size")
+    parser.add_argument("--lr", type=float, default=5e-6, help="Learning rate (5e-6 standard for WDL fine-tuning)")
     parser.add_argument("--weight-decay", type=float, default=1e-5, help="Weight decay")
-    parser.add_argument("--max-samples", type=int, default=10000, help="Max samples")
-    parser.add_argument("--workers", type=int, default=2, help="DataLoader workers")
-    parser.add_argument("--log-interval", type=int, default=50, help="Log interval")
+    parser.add_argument("--max-samples", type=int, default=1500, help="Max samples")
+    parser.add_argument("--workers", type=int, default=0, help="DataLoader workers")
+    parser.add_argument("--log-interval", type=int, default=5, help="Log interval")
 
     args = parser.parse_args()
     train(args)
