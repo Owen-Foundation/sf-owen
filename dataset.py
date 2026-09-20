@@ -21,18 +21,21 @@ SDATA_DTYPE_69 = np.dtype([
 class ChessNNUEDataset(Dataset):
     def __init__(self, fens_or_file, max_samples=None):
         self.is_bin = False
-        self.bin_data = None
+        self.file_path = None
         self.samples = []
 
         if isinstance(fens_or_file, list):
             self.samples = fens_or_file
         elif os.path.exists(fens_or_file):
+            self.file_path = fens_or_file
             if fens_or_file.endswith(".bin"):
                 self.is_bin = True
-                self.bin_data = np.memmap(fens_or_file, dtype=SDATA_DTYPE_69, mode='r')
-                self.num_samples = len(self.bin_data)
+                file_size = os.path.getsize(fens_or_file)
+                total_records = file_size // 69
+                self.num_samples = total_records
                 if max_samples and max_samples < self.num_samples:
                     self.num_samples = max_samples
+                self.bin_data = np.memmap(fens_or_file, dtype=SDATA_DTYPE_69, mode='r')
                 print(f"Loaded memory-mapped binary dataset: {self.num_samples:,} positions.")
             elif fens_or_file.endswith(".epd") or fens_or_file.endswith(".txt"):
                 with open(fens_or_file, "r") as f:
