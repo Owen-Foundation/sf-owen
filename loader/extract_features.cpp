@@ -7,13 +7,13 @@
 #include <array>
 
 #define private public
-#include "/home/hemesh/sf-src/src/types.h"
-#include "/home/hemesh/sf-src/src/position.h"
-#include "/home/hemesh/sf-src/src/bitboard.h"
-#include "/home/hemesh/sf-src/src/attacks.h"
-#include "/home/hemesh/sf-src/src/nnue/features/half_ka_v2_hm.h"
-#include "/home/hemesh/sf-src/src/nnue/features/full_threats.h"
-#include "/home/hemesh/sf-src/src/nnue/features/pp_3wide.h"
+#include "types.h"
+#include "position.h"
+#include "bitboard.h"
+#include "attacks.h"
+#include "nnue/features/half_ka_v2_hm.h"
+#include "nnue/features/full_threats.h"
+#include "nnue/features/pp_3wide.h"
 #undef private
 
 using namespace Stockfish;
