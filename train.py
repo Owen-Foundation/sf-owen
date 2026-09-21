@@ -32,7 +32,23 @@ def train(args):
 
     model = StockfishNNUE().to(device)
     model.load_from_dict(weights_dict)
-    print(f"Model parameters: {sum(p.numel() for p in model.parameters()):,}", flush=True)
+    
+    if args.freeze_ft:
+        print("Freezing Feature Transformer (HalfKA, Threats, PP) to preserve 3600 Elo search speed...", flush=True)
+        model.ft_biases.requires_grad = False
+        model.threat_weights.requires_grad = False
+        model.threat_psqt.requires_grad = False
+        model.pp_weights.requires_grad = False
+        model.pp_psqt.requires_grad = False
+        model.halfka_weights.requires_grad = False
+        model.halfka_psqt.requires_grad = False
+        for stack in model.stacks:
+            for p in stack.parameters():
+                p.requires_grad = True
+        trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        print(f"Trainable parameters (Output Stacks only): {trainable:,}", flush=True)
+    else:
+        print(f"Model parameters (Full Fine-Tuning): {sum(p.numel() for p in model.parameters()):,}", flush=True)
 
     # 2. Setup Dataset
     print(f"Loading dataset: {args.data}...", flush=True)
@@ -52,7 +68,8 @@ def train(args):
     # 3. Optimizer & Sigmoid WDL Loss
     # Scale factor for centipawns -> win probability (standard 400.0 cp)
     SCALE = 400.0
-    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+    trainable_params = [p for p in model.parameters() if p.requires_grad]
+    optimizer = torch.optim.AdamW(trainable_params, lr=args.lr, weight_decay=args.weight_decay)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=1e-7)
     criterion = nn.BCEWithLogitsLoss()
 
@@ -128,6 +145,7 @@ if __name__ == "__main__":
     parser.add_argument("--base-net", type=str, default="/home/hemesh/sf-nets/nn-1a298aa575a0.nnue", help="Path to base .nnue")
     parser.add_argument("--data", type=str, default="/home/hemesh/sf-nets/kaggle_d24_v6/d24_distill.bin", help="Training dataset")
     parser.add_argument("--output-net", type=str, default="/home/hemesh/sf-nets/sf-owen-v19-wdl-champion.nnue", help="Output .nnue path")
+    parser.add_argument("--freeze-ft", action="store_true", help="Freeze feature transformer and train only output layer stacks")
     parser.add_argument("--epochs", type=int, default=1, help="Training epochs")
     parser.add_argument("--batch-size", type=int, default=64, help="Batch size")
     parser.add_argument("--lr", type=float, default=5e-6, help="Learning rate (5e-6 standard for WDL fine-tuning)")
