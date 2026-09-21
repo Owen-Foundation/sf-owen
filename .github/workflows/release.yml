@@ -1,4 +1,4 @@
-name: SF-Owen Multi-Platform Release Builds
+name: SF-Owen Multi-Platform Release Builds (Baked NNUE)
 
 on:
   push:
@@ -26,12 +26,20 @@ jobs:
           repository: official-stockfish/Stockfish
           path: sf-src
 
-      - name: Compile SF-Owen Engine Binary
+      - name: Download & Bake Champion NNUE
+        run: |
+          cd sf-src/src
+          curl -s -L "https://github.com/Owen-Foundation/sf-owen/releases/download/v1.0.0/sf-owen-v19-anchor-champion.nnue" -o sf-owen-v19-anchor-champion.nnue
+          sed -i 's/#define EvalFileDefaultName .*/#define EvalFileDefaultName "sf-owen-v19-anchor-champion.nnue"/' evaluate.h
+          ls -lh sf-owen-v19-anchor-champion.nnue
+
+      - name: Compile SF-Owen Baked Binary
         run: |
           cd sf-src/src
           make -j$(nproc) build ARCH=${{ matrix.arch }} COMP=gcc
           mkdir -p ../../dist
           cp stockfish ../../dist/sf-owen-linux-${{ matrix.arch }}
+          ls -lh ../../dist/sf-owen-linux-${{ matrix.arch }}
 
       - name: Upload Linux Artifact
         uses: actions/upload-artifact@v4
@@ -59,15 +67,24 @@ jobs:
         uses: msys2/setup-msys2@v2
         with:
           msystem: MINGW64
-          install: make mingw-w64-x86_64-gcc
+          install: make mingw-w64-x86_64-gcc curl
 
-      - name: Compile SF-Owen Windows Binary
+      - name: Download & Bake Champion NNUE
+        shell: msys2 {0}
+        run: |
+          cd sf-src/src
+          curl -s -L "https://github.com/Owen-Foundation/sf-owen/releases/download/v1.0.0/sf-owen-v19-anchor-champion.nnue" -o sf-owen-v19-anchor-champion.nnue
+          sed -i 's/#define EvalFileDefaultName .*/#define EvalFileDefaultName "sf-owen-v19-anchor-champion.nnue"/' evaluate.h
+          ls -lh sf-owen-v19-anchor-champion.nnue
+
+      - name: Compile SF-Owen Windows Baked Binary
         shell: msys2 {0}
         run: |
           cd sf-src/src
           make -j$(nproc) build ARCH=${{ matrix.arch }} COMP=gcc
           mkdir -p ../../dist
           cp stockfish.exe ../../dist/sf-owen-windows-${{ matrix.arch }}.exe
+          ls -lh ../../dist/sf-owen-windows-${{ matrix.arch }}.exe
 
       - name: Upload Windows Artifact
         uses: actions/upload-artifact@v4
@@ -91,12 +108,20 @@ jobs:
           repository: official-stockfish/Stockfish
           path: sf-src
 
-      - name: Compile SF-Owen macOS Binary
+      - name: Download & Bake Champion NNUE
+        run: |
+          cd sf-src/src
+          curl -s -L "https://github.com/Owen-Foundation/sf-owen/releases/download/v1.0.0/sf-owen-v19-anchor-champion.nnue" -o sf-owen-v19-anchor-champion.nnue
+          sed -i '' 's/#define EvalFileDefaultName .*/#define EvalFileDefaultName "sf-owen-v19-anchor-champion.nnue"/' evaluate.h
+          ls -lh sf-owen-v19-anchor-champion.nnue
+
+      - name: Compile SF-Owen macOS Baked Binary
         run: |
           cd sf-src/src
           make -j$(sysctl -n hw.ncpu) build ARCH=${{ matrix.arch }} COMP=clang
           mkdir -p ../../dist
           cp stockfish ../../dist/sf-owen-macos-${{ matrix.arch }}
+          ls -lh ../../dist/sf-owen-macos-${{ matrix.arch }}
 
       - name: Upload macOS Artifact
         uses: actions/upload-artifact@v4
@@ -121,7 +146,7 @@ jobs:
         run: |
           mkdir -p release_assets
           # Copy Champion Neural Network Weights
-          cp sf-owen-v19-anchor-champion.nnue release_assets/ 2>/dev/null || true
+          curl -s -L "https://github.com/Owen-Foundation/sf-owen/releases/download/v1.0.0/sf-owen-v19-anchor-champion.nnue" -o release_assets/sf-owen-v19-anchor-champion.nnue
           cp -r games release_assets/
           
           # Flatten dist directory
@@ -129,23 +154,28 @@ jobs:
           
           # Create zip archives for Windows & Linux
           cd release_assets
-          zip -r sf-owen-champion-all-platforms.zip *
+          zip -r sf-owen-baked-champion-all-platforms.zip *
           ls -lh
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/')
         with:
-          name: SF-Owen 1.0 — Surpassing Stockfish 19 (+107.54 Elo)
+          name: SF-Owen 1.0 — Self-Contained Baked Engine (+107.54 Elo)
           body: |
-            ## 🏆 SF-Owen 1.0 Release
+            ## 🏆 SF-Owen 1.0 (Self-Contained Baked NNUE Release)
             
-            Official release of **SF-Owen**, outperforming Stockfish 19 by **+107.54 Elo** (6.5 / 10 score, 0 losses) in tournament validation.
+            Official multi-platform release of **SF-Owen**, outperforming Stockfish 19 by **+107.54 Elo** (6.5 / 10 score, 0 losses).
+            
+            ### 🚀 100% Self-Contained (No External Files Required)
+            All binaries have the **98.5 MB Champion Neural Network baked directly inside the executable**. You can load them directly into **ChessBase, Arena, Cutechess, Banksia, or Lichess**.
             
             ### Included Assets:
-            - **`sf-owen-v19-anchor-champion.nnue`**: The official champion neural network weights (98.5 MB).
-            - **Multi-Platform Binaries**: Linux, Windows (`.exe`), and macOS (Apple Silicon M1/M2/M3 & Intel).
-            - **`games/`**: Tournament PGNs and move-by-move checkmate games against Stockfish 19.
+            - **`sf-owen-windows-*.exe`**: Self-contained Windows executables (AVX-512, AVX2, BMI2, Modern).
+            - **`sf-owen-linux-*`**: Self-contained Linux executables (AVX-512, AVX2, BMI2, Modern, Generic).
+            - **`sf-owen-macos-*`**: Self-contained macOS executables (Apple Silicon M1/M2/M3/M4 & Intel).
+            - **`sf-owen-v19-anchor-champion.nnue`**: Standalone neural network file.
+            - **`games/`**: PGN records of the 3 checkmate victories against Stockfish 19.
           files: |
             release_assets/*
           draft: false
