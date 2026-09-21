@@ -1,0 +1,16 @@
+diff --git a/src/search.cpp b/src/search.cpp
+index 0033e59..2dd415b 100644
+--- a/src/search.cpp
++++ b/src/search.cpp
+@@ -1173,6 +1173,11 @@ moves_loop:  // When in check, search starts here
+         movedPiece = pos.moved_piece(move);
+         givesCheck = pos.gives_check(move);
+ 
++        // Owen Tactical & Passed Pawn Push Extension
++        if (type_of(movedPiece) == PAWN && relative_rank(us, move.to_sq()) >= RANK_6 && depth >= 6) {
++            extension += 1;
++        }
++
+         // Calculate new depth for this move
+         newDepth = depth - 1;
+ 
