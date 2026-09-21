@@ -114,7 +114,7 @@ def load_sf_nnue(file_path: str):
         for stack_idx in range(8):
             stack_hash = struct.unpack("<I", f.read(4))[0]
             fc0_b = np.frombuffer(f.read(32 * 4), dtype=np.int32).copy()
-            fc0_w = np.frombuffer(f.read(32 * 1024), dtype=np.int8).reshape(1024, 32).T.copy()
+            fc0_w = np.frombuffer(f.read(32 * 1024), dtype=np.int8).reshape(32, 1024).copy()
             
             fc1_b = np.frombuffer(f.read(32 * 4), dtype=np.int32).copy()
             fc1_w = np.frombuffer(f.read(32 * 64), dtype=np.int8).reshape(32, 64).copy()
